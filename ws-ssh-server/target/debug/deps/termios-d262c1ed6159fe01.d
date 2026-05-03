@@ -1,0 +1,10 @@
+/home/runner/workspace/ws-ssh-server/target/debug/deps/termios-d262c1ed6159fe01.d: /home/runner/workspace/.local/share/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/termios-0.2.2/src/lib.rs /home/runner/workspace/.local/share/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/termios-0.2.2/src/ffi.rs /home/runner/workspace/.local/share/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/termios-0.2.2/src/os/mod.rs /home/runner/workspace/.local/share/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/termios-0.2.2/src/os/linux.rs
+
+/home/runner/workspace/ws-ssh-server/target/debug/deps/libtermios-d262c1ed6159fe01.rlib: /home/runner/workspace/.local/share/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/termios-0.2.2/src/lib.rs /home/runner/workspace/.local/share/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/termios-0.2.2/src/ffi.rs /home/runner/workspace/.local/share/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/termios-0.2.2/src/os/mod.rs /home/runner/workspace/.local/share/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/termios-0.2.2/src/os/linux.rs
+
+/home/runner/workspace/ws-ssh-server/target/debug/deps/libtermios-d262c1ed6159fe01.rmeta: /home/runner/workspace/.local/share/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/termios-0.2.2/src/lib.rs /home/runner/workspace/.local/share/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/termios-0.2.2/src/ffi.rs /home/runner/workspace/.local/share/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/termios-0.2.2/src/os/mod.rs /home/runner/workspace/.local/share/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/termios-0.2.2/src/os/linux.rs
+
+/home/runner/workspace/.local/share/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/termios-0.2.2/src/lib.rs:
+/home/runner/workspace/.local/share/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/termios-0.2.2/src/ffi.rs:
+/home/runner/workspace/.local/share/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/termios-0.2.2/src/os/mod.rs:
+/home/runner/workspace/.local/share/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/termios-0.2.2/src/os/linux.rs:

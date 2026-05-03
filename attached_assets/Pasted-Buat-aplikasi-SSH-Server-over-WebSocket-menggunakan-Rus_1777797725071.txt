@@ -1,0 +1,231 @@
+Buat aplikasi **SSH Server over WebSocket** menggunakan Rust, tanpa sshd.
+
+## Tujuan
+Server yang menerima koneksi WebSocket, lalu menjalankan protokol SSH asli di atas transport WebSocket tersebut. Client bisa remote shell ke server ini tanpa sshd terinstall.
+
+---
+
+## Stack & Dependencies (Cargo.toml)
+
+```toml
+[package]
+name = "ws-ssh-server"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "server"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = "0.21"
+futures-util = "0.3"
+russh = "0.44"
+russh-keys = "0.44"
+portable-pty = "0.8"
+async-trait = "0.1"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+bytes = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+```
+
+---
+
+## Struktur File
+
+```
+src/
+  main.rs          ← entry point, TCP listener + WebSocket upgrade
+  transport.rs     ← WsTransport: wrap WebSocket jadi AsyncRead+AsyncWrite
+  handler.rs       ← SshHandler: implement russh::server::Handler
+  pty.rs           ← PtySession: spawn shell, relay I/O ke SSH channel
+  auth.rs          ← validasi username & password
+```
+
+---
+
+## Detail Implementasi
+
+### `src/transport.rs`
+Buat struct `WsTransport` yang wrap `WebSocketStream<TcpStream>` dan implement `tokio::io::AsyncRead` + `tokio::io::AsyncWrite`.
+
+- `poll_read`: poll WebSocket, ambil frame `Message::Binary`, copy ke buf. Sisanya simpan di internal `BytesMut` buffer.
+- `poll_write`: kirim data sebagai `Message::Binary`.
+- `poll_flush` dan `poll_shutdown`: delegate ke WebSocket.
+- Internal buffer `read_buf: BytesMut` untuk handle partial reads.
+
+### `src/auth.rs`
+Struct `AuthStore` dengan HashMap user→password.
+Default users (hardcode untuk demo):
+- `admin` / `secret123`
+- `guest` / `guest`
+
+Method:
+- `fn verify_password(&self, user: &str, pass: &str) -> bool`
+- `fn verify_pubkey(&self, user: &str, key: &russh_keys::key::PublicKey) -> bool` → return true semua untuk demo
+
+### `src/pty.rs`
+Struct `PtySession`:
+```rust
+pub struct PtySession {
+    master: Box<dyn portable_pty::MasterPty + Send>,
+    writer: Box<dyn std::io::Write + Send>,
+    child: Box<dyn portable_pty::Child + Send + Sync>,
+}
+```
+
+Method:
+- `fn new(cols: u16, rows: u16) -> Result<(Self, Box<dyn Read + Send>)>`
+  - Pakai `native_pty_system().openpty()`
+  - Spawn shell dari env var `SHELL` atau fallback ke `/bin/bash`
+  - Set env `TERM=xterm-256color`
+  - Return (session, reader)
+- `fn resize(&self, cols: u16, rows: u16) -> Result<()>`
+- `fn write_input(&mut self, data: &[u8]) -> Result<()>`
+
+### `src/handler.rs`
+Struct `SshHandler` yang implement `russh::server::Handler`:
+
+```rust
+pub struct SshHandler {
+    auth: Arc<AuthStore>,
+    pty_writer: Option<Box<dyn Write + Send>>,
+    pty_master: Option<Box<dyn MasterPty + Send>>,
+}
+```
+
+Implement method berikut:
+
+1. **`auth_password`** — panggil `auth.verify_password()`, return `Auth::Accept` atau `Auth::Reject`
+
+2. **`auth_publickey`** — panggil `auth.verify_pubkey()`, return `Auth::Accept`
+
+3. **`channel_open_session`** — return `Ok(true)`
+
+4. **`pty_request`** — simpan ukuran cols/rows ke state, return `session.request_success()`
+
+5. **`shell_request`** — ini yang paling penting:
+   - Buat `PtySession::new(cols, rows)`
+   - Simpan writer ke `self.pty_writer`
+   - Spawn `tokio::task::spawn_blocking` untuk baca reader:
+     ```rust
+     loop {
+         match reader.read(&mut buf) {
+             Ok(0) => break,
+             Ok(n) => {
+                 let data = CryptoVec::from_slice(&buf[..n]);
+                 handle.data(channel_id, data).await?;
+             }
+             Err(_) => break,
+         }
+     }
+     handle.eof(channel_id).await?;
+     handle.close(channel_id).await?;
+     ```
+   - Panggil `session.request_success()`
+
+6. **`data`** — tulis `data` ke `self.pty_writer`
+
+7. **`window_change_request`** — resize PTY master, panggil `session.request_success()`
+
+8. **`channel_close`** — kill child process kalau ada
+
+### `src/main.rs`
+```rust
+#[tokio::main]
+async fn main() -> Result<()> {
+    // init tracing
+    // load atau generate Ed25519 host key
+    //   → coba load dari "host_key.pem", kalau tidak ada generate & simpan
+    // bind TcpListener ke 0.0.0.0:8022
+    // loop: accept() → tokio::spawn(handle_connection)
+}
+
+async fn handle_connection(stream: TcpStream, peer: SocketAddr) {
+    // upgrade ke WebSocket: accept_async(stream)
+    // buat WsTransport
+    // buat russh::server::Config dengan host key
+    // panggil russh::server::run_stream(config, transport, SshHandler::new())
+}
+```
+
+---
+
+## Host Key Management
+
+Di `main.rs`, implementasikan:
+```rust
+fn load_or_generate_host_key() -> russh_keys::key::KeyPair {
+    let path = "host_key";
+    if std::path::Path::new(path).exists() {
+        russh_keys::load_secret_key(path, None).unwrap()
+    } else {
+        let key = russh_keys::key::KeyPair::generate_ed25519().unwrap();
+        russh_keys::encode_pkcs8_pem(&key, &mut std::fs::File::create(path).unwrap()).unwrap();
+        key
+    }
+}
+```
+
+---
+
+## russh Config
+
+```rust
+let config = Arc::new(russh::server::Config {
+    inactivity_timeout: Some(std::time::Duration::from_secs(300)),
+    auth_rejection_time: std::time::Duration::from_secs(1),
+    auth_rejection_time_initial: Some(std::time::Duration::from_secs(0)),
+    keys: vec![host_key],
+    ..Default::default()
+});
+```
+
+---
+
+## Cara Test
+
+### Opsi A — pakai websocat sebagai bridge
+```bash
+# Terminal 1: jalankan server
+cargo run
+
+# Terminal 2: buat bridge WebSocket → TCP
+websocat -b tcp-l:127.0.0.1:2222 ws://localhost:8022
+
+# Terminal 3: konek SSH
+ssh -o StrictHostKeyChecking=no -p 2222 admin@localhost
+# password: secret123
+```
+
+### Opsi B — pakai wssh atau client SSH yang support WS transport natively
+
+---
+
+## .replit
+
+```toml
+[run]
+command = "cargo run"
+
+[nix]
+channel = "stable-23_11"
+
+[[ports]]
+localPort = 8022
+externalPort = 8022
+```
+
+---
+
+## Catatan Penting
+
+1. **Jangan** pakai `unwrap()` di production — pakai `?` dan propagate error dengan `anyhow`
+2. **Host key** harus persist antara restart (simpan ke file)
+3. Semua operasi blocking (PTY read/write) harus di `spawn_blocking`
+4. WsTransport harus handle `Message::Ping` dengan auto-Pong agar koneksi tidak timeout
+5. Tambahkan logging di setiap event penting: koneksi masuk, auth attempt, shell spawn, disconnect
