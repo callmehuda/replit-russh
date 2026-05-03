@@ -21,7 +21,6 @@ args = ["pnpm", "--filter", "@workspace/api-server", "run", "build"]
 NODE_ENV = "production"
 
 [services.production.run]
-# we don't run through pnpm to make startup faster in production
 args = ["node", "--enable-source-maps", "artifacts/api-server/dist/index.mjs"]
 
 [services.production.run.env]
@@ -30,3 +29,18 @@ NODE_ENV = "production"
 
 [services.production.health.startup]
 path = "/api/healthz"
+
+[[services]]
+localPort = 8022
+name = "SSH-over-WebSocket Server"
+
+[services.development]
+run = "cd /home/runner/workspace/ws-ssh-server && cargo run --bin server"
+
+[services.production]
+
+[services.production.build]
+args = ["cargo", "build", "--release", "--manifest-path", "ws-ssh-server/Cargo.toml"]
+
+[services.production.run]
+args = ["ws-ssh-server/target/release/server"]
