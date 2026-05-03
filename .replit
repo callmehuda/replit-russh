@@ -1,4 +1,4 @@
-modules = ["nodejs-24", "rust-stable"]
+modules = ["nodejs-24", "rust-stable", "python-3.11"]
 
 [deployment]
 router = "application"

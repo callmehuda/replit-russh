@@ -44,11 +44,27 @@ function CopyButton({ text, label }: { text: string; label?: string }) {
   );
 }
 
-function getWsUrl(): string {
+function getLocalWsUrl(): string {
   const { hostname, protocol } = window.location;
   const isSecure = protocol === "https:";
   const wsProtocol = isSecure ? "wss" : "ws";
   return `${wsProtocol}://${hostname}/ssh`;
+}
+
+function useWsUrl() {
+  const localUrl = useMemo(() => getLocalWsUrl(), []);
+  const [externalUrl, setExternalUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/info")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.wsUrl) setExternalUrl(d.wsUrl);
+      })
+      .catch(() => {});
+  }, []);
+
+  return externalUrl ?? localUrl;
 }
 
 function CodeBlock({ code }: { code: string }) {
@@ -73,7 +89,7 @@ function CodeBlock({ code }: { code: string }) {
 }
 
 function Dashboard() {
-  const wsUrl = useMemo(() => getWsUrl(), []);
+  const wsUrl = useWsUrl();
   const bridgeCmd = `websocat -b tcp-l:127.0.0.1:2222 ${wsUrl}`;
   const sshCmd = `ssh -o StrictHostKeyChecking=no -p 2222 admin@localhost`;
 

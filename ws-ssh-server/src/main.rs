@@ -1,18 +1,19 @@
 mod auth;
 mod handler;
 mod pty;
-mod transport;
 
 use anyhow::Result;
 use auth::AuthStore;
+use futures_util::{SinkExt, StreamExt};
 use handler::SshHandler;
 use russh_keys::key::KeyPair;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::accept_async;
+use tokio_tungstenite::tungstenite::Message;
 use tracing::{error, info};
-use transport::WsTransport;
 
 fn load_or_generate_host_key() -> Result<KeyPair> {
     let path = "host_key";
@@ -58,10 +59,7 @@ async fn main() -> Result<()> {
     let bind_addr = format!("0.0.0.0:{port}");
     let listener = TcpListener::bind(&bind_addr).await?;
     info!("SSH-over-WebSocket server listening on {bind_addr}");
-    info!("WebSocket path: /ssh  (accessible via proxy at wss://<host>/ssh)");
-    info!("Bridge: websocat -b tcp-l:127.0.0.1:2222 wss://<host>/ssh");
-    info!("Connect: ssh -o StrictHostKeyChecking=no -p 2222 admin@localhost");
-    info!("Credentials: admin/secret123 or guest/guest");
+    info!("WebSocket path: /ssh  (proxy: wss://<host>/ssh)");
 
     loop {
         match listener.accept().await {
@@ -88,15 +86,84 @@ async fn handle_connection(
     config: Arc<russh::server::Config>,
     auth: Arc<AuthStore>,
 ) -> Result<()> {
-    info!(%peer_addr, "Upgrading connection to WebSocket");
+    info!(%peer_addr, "Upgrading to WebSocket");
     let ws_stream = accept_async(stream).await?;
-    info!(%peer_addr, "WebSocket handshake complete");
+    info!(%peer_addr, "WebSocket handshake complete — starting SSH");
 
-    let transport = WsTransport::new(ws_stream);
+    // Split the WebSocket into independent sink and source
+    let (mut ws_sink, mut ws_source) = ws_stream.split();
+
+    // Create a duplex pipe: russh uses one end, bridge tasks use the other
+    // This avoids concurrent mutable access on the WebSocketStream
+    let (russh_io, bridge_io) = tokio::io::duplex(128 * 1024);
+    let (mut bridge_reader, mut bridge_writer) = tokio::io::split(bridge_io);
+
+    // Task A: WebSocket → russh (incoming SSH bytes from client)
+    let ws_to_russh = tokio::spawn(async move {
+        while let Some(msg_result) = ws_source.next().await {
+            match msg_result {
+                Ok(Message::Binary(data)) => {
+                    if bridge_writer.write_all(&data).await.is_err() {
+                        break;
+                    }
+                }
+                Ok(Message::Text(text)) => {
+                    // Some WebSocket bridges send text frames — handle as raw bytes
+                    if bridge_writer.write_all(text.as_bytes()).await.is_err() {
+                        break;
+                    }
+                }
+                Ok(Message::Ping(payload)) => {
+                    // Pings are handled by tungstenite automatically, just continue
+                    let _ = payload;
+                }
+                Ok(Message::Close(_)) | Err(_) => break,
+                _ => {}
+            }
+        }
+        info!("ws→russh bridge ended");
+    });
+
+    // Task B: russh → WebSocket (outgoing SSH bytes to client)
+    let russh_to_ws = tokio::spawn(async move {
+        let mut buf = vec![0u8; 32 * 1024];
+        loop {
+            match bridge_reader.read(&mut buf).await {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    let msg = Message::Binary(buf[..n].to_vec().into());
+                    if ws_sink.send(msg).await.is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+        let _ = ws_sink.close().await;
+        info!("russh→ws bridge ended");
+    });
+
+    // Run the SSH server on the clean duplex stream (no WebSocket involved)
     let handler = SshHandler::new(auth, peer_addr.to_string());
+    let session = russh::server::run_stream(config, russh_io, handler).await;
 
-    russh::server::run_stream(config, transport, handler).await?;
+    let session = match session {
+        Ok(s) => s,
+        Err(e) => {
+            ws_to_russh.abort();
+            russh_to_ws.abort();
+            return Err(e.into());
+        }
+    };
 
-    info!(%peer_addr, "SSH session ended");
+    // Wait for the SSH session to complete
+    match session.await {
+        Ok(_handler) => info!(%peer_addr, "SSH session ended cleanly"),
+        Err(e) => error!(%peer_addr, "SSH session error: {e:#}"),
+    }
+
+    // Abort bridge tasks now that SSH session is done
+    ws_to_russh.abort();
+    russh_to_ws.abort();
+
     Ok(())
 }
