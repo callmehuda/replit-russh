@@ -1,0 +1,2 @@
+ws-ssh-server/target/debug/deps/server-a4349d267df416bd filter=lfs diff=lfs merge=lfs -text
+ws-ssh-server/target/debug/server filter=lfs diff=lfs merge=lfs -text

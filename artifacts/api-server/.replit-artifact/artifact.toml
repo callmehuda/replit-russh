@@ -31,11 +31,15 @@ NODE_ENV = "production"
 path = "/api/healthz"
 
 [[services]]
-localPort = 8022
+localPort = 8000
 name = "SSH-over-WebSocket Server"
+paths = ["/ssh"]
 
 [services.development]
 run = "cd /home/runner/workspace/ws-ssh-server && cargo run --bin server"
+
+[services.development.env]
+PORT = "8000"
 
 [services.production]
 
@@ -44,3 +48,6 @@ args = ["cargo", "build", "--release", "--manifest-path", "ws-ssh-server/Cargo.t
 
 [services.production.run]
 args = ["ws-ssh-server/target/release/server"]
+
+[services.production.run.env]
+PORT = "8000"

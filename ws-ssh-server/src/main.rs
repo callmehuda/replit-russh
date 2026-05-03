@@ -22,7 +22,8 @@ fn load_or_generate_host_key() -> Result<KeyPair> {
         Ok(key)
     } else {
         info!("Generating new Ed25519 host key and saving to {path}");
-        let key = KeyPair::generate_ed25519().ok_or_else(|| anyhow::anyhow!("Failed to generate Ed25519 key"))?;
+        let key = KeyPair::generate_ed25519()
+            .ok_or_else(|| anyhow::anyhow!("Failed to generate Ed25519 key"))?;
         let mut file = std::fs::File::create(path)?;
         russh_keys::encode_pkcs8_pem(&key, &mut file)?;
         Ok(key)
@@ -38,6 +39,11 @@ async fn main() -> Result<()> {
         )
         .init();
 
+    let port = std::env::var("PORT")
+        .ok()
+        .and_then(|p| p.parse::<u16>().ok())
+        .unwrap_or(8000);
+
     let host_key = load_or_generate_host_key()?;
     let auth = Arc::new(AuthStore::new());
 
@@ -49,11 +55,12 @@ async fn main() -> Result<()> {
         ..Default::default()
     });
 
-    let bind_addr = "0.0.0.0:8022";
-    let listener = TcpListener::bind(bind_addr).await?;
+    let bind_addr = format!("0.0.0.0:{port}");
+    let listener = TcpListener::bind(&bind_addr).await?;
     info!("SSH-over-WebSocket server listening on {bind_addr}");
-    info!("Test with: websocat -b tcp-l:127.0.0.1:2222 ws://localhost:8022");
-    info!("Then: ssh -o StrictHostKeyChecking=no -p 2222 admin@localhost");
+    info!("WebSocket path: /ssh  (accessible via proxy at wss://<host>/ssh)");
+    info!("Bridge: websocat -b tcp-l:127.0.0.1:2222 wss://<host>/ssh");
+    info!("Connect: ssh -o StrictHostKeyChecking=no -p 2222 admin@localhost");
     info!("Credentials: admin/secret123 or guest/guest");
 
     loop {

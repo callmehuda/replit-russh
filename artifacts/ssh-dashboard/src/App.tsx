@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from "react";
-import { Terminal, Copy, Check, Server, Shield, Layers, Info, ArrowRight } from "lucide-react";
+import React, { useState, useEffect, useMemo } from "react";
+import { Terminal, Copy, Check, Shield, Layers, Info, ArrowRight } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
@@ -44,11 +44,14 @@ function CopyButton({ text, label }: { text: string; label?: string }) {
   );
 }
 
-function CodeBlock({ code, editableHost }: { code: string; editableHost?: boolean }) {
-  const [host, setHost] = useState("localhost");
+function getWsUrl(): string {
+  const { hostname, protocol } = window.location;
+  const isSecure = protocol === "https:";
+  const wsProtocol = isSecure ? "wss" : "ws";
+  return `${wsProtocol}://${hostname}/ssh`;
+}
 
-  const displayCode = editableHost ? code.replace("<HOST>", host) : code;
-
+function CodeBlock({ code }: { code: string }) {
   return (
     <div className="relative group rounded-md border border-border bg-black/40 overflow-hidden mt-3 transition-colors hover:border-primary/30">
       <div className="flex items-center justify-between px-4 py-2 border-b border-border/50 bg-black/20">
@@ -60,40 +63,20 @@ function CodeBlock({ code, editableHost }: { code: string; editableHost?: boolea
           </div>
           <span className="text-xs font-mono text-muted-foreground ml-2">bash</span>
         </div>
-        <CopyButton text={displayCode} />
+        <CopyButton text={code} />
       </div>
-      
-      <div className="p-4 font-mono text-sm leading-relaxed overflow-x-auto whitespace-pre-wrap">
-        {editableHost ? (
-          <div className="flex flex-wrap items-center">
-            <span className="text-blue-400">websocat</span>
-            <span className="text-muted-foreground mx-2">-b</span>
-            <span className="text-green-400">tcp-l:127.0.0.1:2222</span>
-            <span className="text-muted-foreground mx-2">ws://</span>
-            <Input 
-              value={host}
-              onChange={(e) => setHost(e.target.value)}
-              className="h-6 w-28 px-1.5 py-0 mx-0.5 bg-primary/10 border-primary/30 text-primary font-mono text-sm text-center rounded focus-visible:ring-1 focus-visible:ring-primary/50"
-              placeholder="localhost"
-            />
-            <span className="text-muted-foreground">:8022</span>
-          </div>
-        ) : (
-          <div className="text-gray-300">
-            <span className="text-blue-400">ssh</span>
-            <span className="text-muted-foreground mx-2">-o</span>
-            <span className="text-orange-300">StrictHostKeyChecking=no</span>
-            <span className="text-muted-foreground mx-2">-p</span>
-            <span className="text-green-400">2222</span>
-            <span className="ml-2 text-gray-300">admin@localhost</span>
-          </div>
-        )}
+      <div className="p-4 font-mono text-sm leading-relaxed overflow-x-auto">
+        <span className="text-gray-300">{code}</span>
       </div>
     </div>
   );
 }
 
 function Dashboard() {
+  const wsUrl = useMemo(() => getWsUrl(), []);
+  const bridgeCmd = `websocat -b tcp-l:127.0.0.1:2222 ${wsUrl}`;
+  const sshCmd = `ssh -o StrictHostKeyChecking=no -p 2222 admin@localhost`;
+
   return (
     <div className="min-h-[100dvh] w-full bg-background text-foreground selection:bg-primary/20 selection:text-primary">
       <div className="fixed inset-0 pointer-events-none opacity-40 bg-[url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0IiBoZWlnaHQ9IjQiPjxyZWN0IHdpZHRoPSI0IiBoZWlnaHQ9IjQiIGZpbGw9IiNmZmYiIGZpbGwtb3BhY2l0eT0iMC4wMSIvPjwvc3ZnPg==')] z-0"></div>
@@ -124,8 +107,8 @@ function Dashboard() {
               <span className="text-sm font-medium tracking-wide text-primary">RUNNING</span>
             </div>
             <Separator orientation="vertical" className="h-6" />
-            <div className="text-xs text-muted-foreground font-mono">
-              ws://127.0.0.1:8022
+            <div className="text-xs text-muted-foreground font-mono break-all">
+              {wsUrl}
             </div>
           </div>
         </header>
@@ -158,7 +141,7 @@ function Dashboard() {
                       <p className="text-sm text-muted-foreground mb-2">
                         Use websocat to listen on a local TCP port and forward traffic to the WebSocket server.
                       </p>
-                      <CodeBlock code="websocat -b tcp-l:127.0.0.1:2222 ws://<HOST>:8022" editableHost={true} />
+                      <CodeBlock code={bridgeCmd} />
                     </div>
                   </div>
                 </div>
@@ -173,7 +156,7 @@ function Dashboard() {
                       <p className="text-sm text-muted-foreground mb-2">
                         Connect your standard SSH client to the local bridged port.
                       </p>
-                      <CodeBlock code="ssh -o StrictHostKeyChecking=no -p 2222 admin@localhost" />
+                      <CodeBlock code={sshCmd} />
                     </div>
                   </div>
                 </div>
@@ -191,21 +174,30 @@ function Dashboard() {
               </CardHeader>
               <CardContent className="text-sm text-muted-foreground leading-relaxed space-y-4">
                 <p>
-                  This server accepts native WebSocket connections and runs the standard SSH protocol on top of the WebSocket payload payload. 
-                  It does <strong className="text-foreground">not</strong> require the system `sshd` daemon to be running.
+                  This server accepts native WebSocket connections and runs the standard SSH protocol on top of the WebSocket transport.
+                  It does <strong className="text-foreground">not</strong> require the system sshd daemon to be running.
+                  The Replit proxy routes <code className="text-primary bg-primary/10 px-1 rounded">/ssh</code> to the Rust server, so standard SSH clients connect via websocat as a bridge.
                 </p>
                 <div className="flex items-center justify-between gap-2 p-4 rounded-lg bg-black/20 border border-border/40 font-mono text-xs overflow-hidden">
                   <div className="flex flex-col items-center gap-2 w-24">
                     <div className="p-2 rounded bg-blue-500/10 border border-blue-500/20 text-blue-400">SSH Client</div>
-                    <span className="text-muted-foreground">Port 2222</span>
+                    <span className="text-muted-foreground">:2222 local</span>
                   </div>
                   <div className="flex-1 flex flex-col items-center">
                     <div className="h-px w-full bg-gradient-to-r from-transparent via-primary/50 to-transparent"></div>
-                    <span className="text-[10px] text-primary py-1">websocat (TCP to WS)</span>
+                    <span className="text-[10px] text-primary py-1">websocat (TCP→WS)</span>
                   </div>
                   <div className="flex flex-col items-center gap-2 w-28">
-                    <div className="p-2 rounded bg-green-500/10 border border-green-500/20 text-green-400">WS-SSH Server</div>
-                    <span className="text-muted-foreground">Port 8022</span>
+                    <div className="p-2 rounded bg-yellow-500/10 border border-yellow-500/20 text-yellow-400">Proxy /ssh</div>
+                    <span className="text-muted-foreground">TLS termination</span>
+                  </div>
+                  <div className="flex-1 flex flex-col items-center">
+                    <div className="h-px w-full bg-gradient-to-r from-transparent via-primary/50 to-transparent"></div>
+                    <span className="text-[10px] text-primary py-1">forward</span>
+                  </div>
+                  <div className="flex flex-col items-center gap-2 w-28">
+                    <div className="p-2 rounded bg-green-500/10 border border-green-500/20 text-green-400">Rust Server</div>
+                    <span className="text-muted-foreground">port 8000</span>
                   </div>
                 </div>
               </CardContent>
